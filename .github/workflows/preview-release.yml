@@ -122,7 +122,10 @@ jobs:
             if ($proc.HasExited) {
               throw "Cirrus process exited during startup with code $($proc.ExitCode)"
             }
-            Write-Host "Process still alive after 12 seconds (PID $($proc.Id)). This does not verify interactive GUI rendering."
+            if ($proc.MainWindowHandle -eq [IntPtr]::Zero) {
+              throw "Cirrus process is alive but no main window appeared after 12 seconds (potential network-blocked startup or CI desktop limitation)."
+            }
+            Write-Host "A main window handle exists after 12 seconds (PID $($proc.Id)). Interactive display is not fully verified."
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           } catch {
             Write-Host "::error::Startup smoke test failed: $($_.Exception.Message)"
@@ -156,7 +159,7 @@ jobs:
           $notes = @"
           Automated first-look preview from commit $env:GITHUB_SHA.
 
-          - Portable ZIP: extract the entire archive, then run Cirrus.exe.
+          - Portable ZIP: extract the entire archive, then run Cirrus.exe. This build uses identity-free settings storage.
           - Built with .NET 10 and self-contained Windows App SDK; x64 only.
           - No MSIX installation or certificate is required for this ZIP.
           - This is an experimental, unsigned, unofficial build; runtime behavior and online services are not yet validated.
