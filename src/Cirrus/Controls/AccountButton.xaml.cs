@@ -43,7 +43,7 @@ public sealed partial class AccountButton
     {
         if (MainWindow.Current is not { } window) return;
         var result = await window.DialogController.ShowMessageBoxAsync(
-            Package.Current.DisplayName,
+            window.ViewModel.ApplicationName,
             "MessageBoxes/LogOut/Content".GetLocalized() ?? "{Invalid Resource}",
             "MessageBoxes/LogOut/PrimaryButtonText".GetLocalized() ?? "{Invalid Resource}",
             "Controls/Buttons/Cancel/Content".GetLocalized() ?? "{Invalid Resource}"
