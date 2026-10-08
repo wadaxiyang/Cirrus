@@ -24,7 +24,11 @@ public sealed partial class App
     {
         InitializeComponent();
         ServicesProvider.TryRegisterServices(static col =>
+#if CIRRUS_PREVIEW
+            col.AddSingleton<IPreferenceAccessService, UnpackagedPreferenceAccessService>()
+#else
             col.AddSingleton<IPreferenceAccessService, PreferenceAccessService>()
+#endif
                 .AddSingleton<ILocalizationService, LocalizationService>()
                 .AddSingleton<ISynchronizationContextService>(new SynchronizationContextService(SynchronizationContext.Current!))
                 .AddSingleton<IPlaybackService<ulong>, SerenadePlaybackService>()
