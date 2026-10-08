@@ -87,12 +87,16 @@ jobs:
           1. Extract every file from the ZIP into the same folder.
           2. Run Cirrus.exe from that folder on Windows 10/11 x64.
           3. Do not run the EXE directly from inside the ZIP.
+          4. If nothing happens, open PowerShell in this extracted folder and run:
+             powershell -ExecutionPolicy Bypass -File .\\Diagnose-Cirrus.ps1
+             Review the generated diagnostics report before sharing it.
 
           This is an unsigned, unpackaged, experimental build of the
           source code in this repository, not an official Cirrus release.
           The preview has not been verified through interactive GUI testing.
           Do not redistribute as an official build.
           '@ | Set-Content -LiteralPath (Join-Path $publishDir "README_PREVIEW.txt") -Encoding utf8
+          Copy-Item -LiteralPath "scripts/Diagnose-Cirrus.ps1" -Destination (Join-Path $publishDir "Diagnose-Cirrus.ps1")
 
           New-Item -ItemType Directory -Force -Path "dist" | Out-Null
           $zip = Join-Path $env:GITHUB_WORKSPACE "dist/Cirrus-preview-win-x64.zip"
@@ -102,6 +106,35 @@ jobs:
           "$hash  Cirrus-preview-win-x64.zip" | Set-Content -LiteralPath "dist/SHA256SUMS.txt" -Encoding ascii
           Write-Host "Preview ZIP: $zip"
           Write-Host "SHA256: $hash"
+
+      - name: Smoke-test unpackaged startup on Windows runner
+        id: startup_smoke
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Stop"
+          $publishDir = Join-Path $env:RUNNER_TEMP "Cirrus-publish"
+          $exe = Join-Path $publishDir "Cirrus.exe"
+          $launchedAt = Get-Date
+          try {
+            $proc = Start-Process -FilePath $exe -WorkingDirectory $publishDir -PassThru -ErrorAction Stop
+            Start-Sleep -Seconds 12
+            $proc.Refresh()
+            if ($proc.HasExited) {
+              throw "Cirrus process exited during startup with code $($proc.ExitCode)"
+            }
+            Write-Host "Process still alive after 12 seconds (PID $($proc.Id)). This does not verify interactive GUI rendering."
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          } catch {
+            Write-Host "::error::Startup smoke test failed: $($_.Exception.Message)"
+            Get-WinEvent -FilterHashtable @{LogName="Application"; StartTime=$launchedAt.AddSeconds(-5)} -MaxEvents 100 -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.ProviderName -in @("Application Error",".NET Runtime","Windows Error Reporting") -and
+                $_.Message -match "Cirrus|WindowsAppSDK|Microsoft.UI.Xaml|WinUI"
+              } |
+              Select-Object -First 5 TimeCreated, ProviderName, Id, Message |
+              Format-List | Out-String | Write-Host
+            throw
+          }
 
       - name: Upload Actions artifact
         uses: actions/upload-artifact@v4
@@ -127,6 +160,8 @@ jobs:
           - Built with .NET 10 and self-contained Windows App SDK; x64 only.
           - No MSIX installation or certificate is required for this ZIP.
           - This is an experimental, unsigned, unofficial build; runtime behavior and online services are not yet validated.
+          - Automated Windows runner startup check: ${{ steps.startup_smoke.outcome }} (headless CI is not the same as an interactive user test).
+          - Includes Diagnose-Cirrus.ps1 if the app exits without showing a window.
           - SHA256 checksum is included in the release assets.
           "@
           $releaseArgs = @(
