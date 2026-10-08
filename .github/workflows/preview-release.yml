@@ -42,6 +42,14 @@ jobs:
           Get-Command msbuild -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
           Write-Host "Source commit: $env:GITHUB_SHA"
 
+      - name: Add Windows Community Toolkit Labs preview feed
+        run: |
+          dotnet nuget add source "https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json" --name "CommunityToolkit-Labs"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not configure the CommunityToolkit Labs preview NuGet feed"
+          }
+          dotnet nuget list source
+
       - name: Publish unpackaged self-contained x64 build
         run: |
           $ErrorActionPreference = "Stop"
