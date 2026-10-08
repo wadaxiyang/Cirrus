@@ -1,0 +1,139 @@
+name: Build Cirrus preview (Windows x64)
+
+on:
+  # The first commit that adds this workflow starts a preview build.
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/preview-release.yml"
+  # Future previews can be built manually without pushing another commit.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cirrus-preview-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-preview:
+    name: Publish unpackaged WinUI 3 preview
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Display build environment
+        run: |
+          dotnet --info
+          Get-Command msbuild -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          Write-Host "Source commit: $env:GITHUB_SHA"
+
+      - name: Publish unpackaged self-contained x64 build
+        run: |
+          $ErrorActionPreference = "Stop"
+          $publishDir = Join-Path $env:RUNNER_TEMP "Cirrus-publish"
+
+          # Avoid the upstream Release configuration's experimental NativeAOT
+          # and an absent .pubxml profile for this first-look preview.
+          $arguments = @(
+            "publish", "src/Cirrus/Cirrus.csproj",
+            "--configuration", "Release",
+            "--runtime", "win-x64",
+            "--self-contained", "true",
+            "--output", $publishDir,
+            "-p:Platform=x64",
+            "-p:WindowsPackageType=None",
+            "-p:WindowsAppSDKSelfContained=true",
+            "-p:PublishAot=false",
+            "-p:PublishTrimmed=false",
+            "-p:PublishProfile=",
+            "-p:GenerateAppxPackageOnBuild=false",
+            "-p:AppxPackageSigningEnabled=false"
+          )
+          & dotnet @arguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "dotnet publish failed with exit code $LASTEXITCODE"
+          }
+
+          $exe = Join-Path $publishDir "Cirrus.exe"
+          if (!(Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw "Expected executable not found: $exe"
+          }
+
+          @'
+          Cirrus experimental Windows x64 preview
+          =======================================
+          1. Extract every file from the ZIP into the same folder.
+          2. Run Cirrus.exe from that folder on Windows 10/11 x64.
+          3. Do not run the EXE directly from inside the ZIP.
+
+          This is an unsigned, unpackaged, experimental build of the
+          source code in this repository, not an official Cirrus release.
+          The preview has not been verified through interactive GUI testing.
+          Do not redistribute as an official build.
+          '@ | Set-Content -LiteralPath (Join-Path $publishDir "README_PREVIEW.txt") -Encoding utf8
+
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          $zip = Join-Path $env:GITHUB_WORKSPACE "dist/Cirrus-preview-win-x64.zip"
+          Compress-Archive -Path (Join-Path $publishDir "*") -DestinationPath $zip -CompressionLevel Optimal -Force
+
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  Cirrus-preview-win-x64.zip" | Set-Content -LiteralPath "dist/SHA256SUMS.txt" -Encoding ascii
+          Write-Host "Preview ZIP: $zip"
+          Write-Host "SHA256: $hash"
+
+      - name: Upload Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cirrus-preview-win-x64
+          path: |
+            dist/Cirrus-preview-win-x64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "preview-${{ github.run_number }}-${{ github.run_attempt }}"
+          $title = "Cirrus Windows x64 preview ($tag)"
+          $notes = @"
+          Automated first-look preview from commit $env:GITHUB_SHA.
+
+          - Portable ZIP: extract the entire archive, then run Cirrus.exe.
+          - Built with .NET 10 and self-contained Windows App SDK; x64 only.
+          - No MSIX installation or certificate is required for this ZIP.
+          - This is an experimental, unsigned, unofficial build; runtime behavior and online services are not yet validated.
+          - SHA256 checksum is included in the release assets.
+          "@
+          $releaseArgs = @(
+            "release", "create", $tag,
+            "dist/Cirrus-preview-win-x64.zip",
+            "dist/SHA256SUMS.txt",
+            "--repo", $env:GITHUB_REPOSITORY,
+            "--target", $env:GITHUB_SHA,
+            "--title", $title,
+            "--notes", $notes,
+            "--prerelease"
+          )
+          & gh @releaseArgs
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub pre-release creation failed with exit code $LASTEXITCODE"
+          }
+          Write-Host "Pre-release created: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag"
