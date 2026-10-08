@@ -45,6 +45,7 @@
     <PropertyGroup Condition="'$(CirrusPreviewBuild)' == 'true'">
         <WindowsPackageType>None</WindowsPackageType>
         <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+        <DefineConstants>$(DefineConstants);CIRRUS_PREVIEW</DefineConstants>
     </PropertyGroup>
 
     <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
