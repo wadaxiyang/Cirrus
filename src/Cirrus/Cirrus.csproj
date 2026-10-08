@@ -48,6 +48,11 @@
         <DefineConstants>$(DefineConstants);CIRRUS_PREVIEW</DefineConstants>
     </PropertyGroup>
 
+    <!-- Only the executable project bundles the Windows App SDK into a packaged preview. -->
+    <PropertyGroup Condition="'$(CirrusMsixPreviewBuild)' == 'true'">
+        <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    </PropertyGroup>
+
     <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
         <EnableWindowsTargeting>True</EnableWindowsTargeting>
     </PropertyGroup>
