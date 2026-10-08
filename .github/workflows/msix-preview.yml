@@ -67,11 +67,7 @@ jobs:
             "-p:CirrusMsixPreviewBuild=true",
             "-p:PublishAot=false",
             "-p:PublishTrimmed=false",
-            "-p:PublishProfile=",
-            "-p:GenerateAppxPackageOnBuild=true",
-            "-p:AppxPackageSigningEnabled=false",
-            "-p:UapAppxPackageBuildMode=SideloadOnly",
-            "-p:AppxBundle=Never"
+            "-p:PublishProfile="
           )
           & dotnet @buildArgs
           if ($LASTEXITCODE -ne 0) { throw "MSIX build failed ($LASTEXITCODE)" }
