@@ -40,6 +40,13 @@
         <AppxPackageDir>../../packages</AppxPackageDir>
     </PropertyGroup>
 
+    <!-- Preview-only unpackaged deployment: keep WindowsAppSDKSelfContained scoped
+         to the executable project, never pass it globally to class libraries. -->
+    <PropertyGroup Condition="'$(CirrusPreviewBuild)' == 'true'">
+        <WindowsPackageType>None</WindowsPackageType>
+        <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    </PropertyGroup>
+
     <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
         <EnableWindowsTargeting>True</EnableWindowsTargeting>
     </PropertyGroup>
