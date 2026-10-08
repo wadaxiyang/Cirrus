@@ -1,8 +1,4 @@
-﻿#if CIRRUS_PREVIEW
-using Microsoft.Windows.Storage;
-#else
-using Windows.Storage;
-#endif
+﻿using Windows.Storage;
 using Cirrus.Base.Services.Abstract;
 
 namespace Cirrus.Services;
@@ -14,21 +10,9 @@ public class PreferenceAccessService : IPreferenceAccessService
 
     public PreferenceAccessService()
     {
-#if CIRRUS_PREVIEW
-        // Unpackaged WinUI 3 processes have no MSIX package identity.
-        // Windows.Storage.ApplicationData.Current therefore fails at startup.
-        // Use the Windows App SDK's unpackaged application data store instead.
-        var applicationData = ApplicationData.GetForUnpackaged("ProjectCirrus", "Cirrus");
-#else
-        var applicationData = ApplicationData.Current;
-#endif
-        var settingsRoot = applicationData.LocalSettings;
+        var settingsRoot = ApplicationData.Current.LocalSettings;
         _localSettings = settingsRoot.CreateContainer("Preferences", ApplicationDataCreateDisposition.Always);
-#if CIRRUS_PREVIEW
-        _externalStorageDirectory = Path.Join(applicationData.LocalPath, "Preferences");
-#else
-        _externalStorageDirectory = Path.Join(applicationData.LocalFolder.Path, "Preferences");
-#endif
+        _externalStorageDirectory = Path.Join(ApplicationData.Current.LocalFolder.Path, "Preferences");
         Directory.CreateDirectory(_externalStorageDirectory);
     }
 
