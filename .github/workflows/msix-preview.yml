@@ -1,0 +1,162 @@
+name: Build Cirrus MSIX preview
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/msix-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  msix:
+    name: Package and sign Windows x64 MSIX
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Add CommunityToolkit Labs NuGet feed
+        run: |
+          dotnet nuget add source "https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json" --name "CommunityToolkit-Labs"
+          if ($LASTEXITCODE -ne 0) { throw "NuGet source setup failed" }
+
+      - name: Set separate development package identity
+        run: |
+          $ErrorActionPreference = "Stop"
+          $path = "src/Cirrus/Package.appxmanifest"
+          [xml]$manifest = Get-Content -LiteralPath $path -Raw -Encoding utf8
+          $ns = [System.Xml.XmlNamespaceManager]::new($manifest.NameTable)
+          $ns.AddNamespace("p", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
+          $ns.AddNamespace("uap", "http://schemas.microsoft.com/appx/manifest/uap/windows10")
+          $identity = $manifest.SelectSingleNode("/p:Package/p:Identity", $ns)
+          $identity.SetAttribute("Name", "wadaxiyang.CirrusPreview")
+          $identity.SetAttribute("Publisher", "CN=wadaxiyang-CirrusPreview")
+          $rev = [int]$env:GITHUB_RUN_NUMBER % 60000
+          $identity.SetAttribute("Version", "0.1.0.$rev")
+          $manifest.SelectSingleNode("/p:Package/p:Properties/p:DisplayName", $ns).InnerText = "Cirrus Preview"
+          $manifest.SelectSingleNode("/p:Package/p:Properties/p:PublisherDisplayName", $ns).InnerText = "Cirrus community preview"
+          $visuals = $manifest.SelectSingleNode("//uap:VisualElements", $ns)
+          $visuals.SetAttribute("DisplayName", "Cirrus Preview")
+          $visuals.SetAttribute("Square150x150Logo", "Assets/AppIcons/AppIcon.png")
+          $visuals.SetAttribute("Square44x44Logo", "Assets/AppIcons/AppIcon.png")
+          $manifest.Save((Resolve-Path $path).Path)
+
+      - name: Build unsigned self-contained x64 MSIX
+        run: |
+          $ErrorActionPreference = "Stop"
+          $buildArgs = @(
+            "publish", "src/Cirrus/Cirrus.csproj",
+            "--configuration", "Release",
+            "--runtime", "win-x64",
+            "--self-contained", "true",
+            "-p:Platform=x64",
+            "-p:CirrusMsixPreviewBuild=true",
+            "-p:PublishAot=false",
+            "-p:PublishTrimmed=false",
+            "-p:PublishProfile=",
+            "-p:GenerateAppxPackageOnBuild=true",
+            "-p:AppxPackageSigningEnabled=false",
+            "-p:UapAppxPackageBuildMode=SideloadOnly",
+            "-p:AppxBundle=Never"
+          )
+          & dotnet @buildArgs
+          if ($LASTEXITCODE -ne 0) { throw "MSIX build failed ($LASTEXITCODE)" }
+          $candidate = Get-ChildItem -Path "." -Recurse -File -Include "*.msix", "*.appx" |
+            Where-Object { $_.FullName -notmatch '[\\/](obj|packages[\\/]cache)[\\/]' } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $candidate) { throw "No MSIX/AppX generated after build" }
+          Write-Host "Built package: $($candidate.FullName)"
+          $candidate.FullName | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "preview-package-path.txt") -Encoding utf8
+
+      - name: Sign MSIX with an ephemeral test publisher
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Path "dist" -Force | Out-Null
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=wadaxiyang-CirrusPreview" -CertStoreLocation "Cert:\CurrentUser\My" -KeyExportPolicy NonExportable -HashAlgorithm SHA256 -NotAfter (Get-Date).AddDays(30)
+          if ($null -eq $cert) { throw "Could not create temporary certificate" }
+          Export-Certificate -Cert $cert -FilePath "dist/CirrusPreview.cer" | Out-Null
+          $kits = "C:\Program Files (x86)\Windows Kits\10\bin"
+          $signTool = Get-ChildItem -Path $kits -Filter "signtool.exe" -File -Recurse |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]signtool\.exe$' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if ($null -eq $signTool) { throw "Cannot find Windows SDK x64 signtool" }
+          $pkgPath = (Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "preview-package-path.txt") -Raw).Trim()
+          & $signTool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint /v $pkgPath
+          if ($LASTEXITCODE -ne 0) { throw "Code-signing failed ($LASTEXITCODE)" }
+          Copy-Item -LiteralPath $pkgPath -Destination "dist/Cirrus-Preview-win-x64.msix" -Force
+
+      - name: Test package installation on build runner
+        id: install_check
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Stop"
+          Import-Certificate -FilePath "dist/CirrusPreview.cer" -CertStoreLocation "Cert:\LocalMachine\TrustedPeople" | Out-Null
+          Add-AppxPackage -Path (Resolve-Path "dist/Cirrus-Preview-win-x64.msix").Path -ErrorAction Stop
+          $pkg = Get-AppxPackage -Name "wadaxiyang.CirrusPreview"
+          if ($null -eq $pkg) { throw "Package not registered after install" }
+          Write-Host "Successfully installed: $($pkg.PackageFullName)"
+
+      - name: Create ZIP, instructions, and checksum
+        run: |
+          $ErrorActionPreference = "Stop"
+          Copy-Item -LiteralPath "scripts/Install-CirrusPreview.ps1" -Destination "dist/Install-CirrusPreview.ps1"
+          @'
+          Cirrus Preview - signed development MSIX, Windows 10/11 x64
+
+          1. Extract this ZIP completely to a local folder.
+          2. Open PowerShell as Administrator in that folder.
+          3. Run the following command:
+             powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-CirrusPreview.ps1
+          4. Find "Cirrus Preview" in your Start menu.
+
+          The script installs the per-build public certificate into
+          LocalMachine/TrustedPeople, NOT the Trusted Root store.
+          This is a temporary, self-signed test certificate; do not distribute
+          it as a trusted production publisher. Review the script before use.
+
+          This build belongs to your Cirrus fork; it is not an official release.
+          '@ | Set-Content -LiteralPath "dist/README_INSTALL.txt" -Encoding utf8
+          $inputs = @("dist/Cirrus-Preview-win-x64.msix", "dist/CirrusPreview.cer", "dist/Install-CirrusPreview.ps1", "dist/README_INSTALL.txt")
+          Compress-Archive -Path $inputs -DestinationPath "dist/Cirrus-Preview-MSIX.zip" -CompressionLevel Optimal -Force
+          $hash = (Get-FileHash -Path "dist/Cirrus-Preview-MSIX.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  Cirrus-Preview-MSIX.zip" | Set-Content -LiteralPath "dist/SHA256SUMS.txt" -Encoding ascii
+
+      - name: Upload signed MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cirrus-preview-msix-win-x64
+          path: |
+            dist/Cirrus-Preview-MSIX.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create MSIX pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "msix-preview-${{ github.run_number }}-${{ github.run_attempt }}"
+          $title = "Cirrus Windows x64 MSIX preview ($tag)"
+          $notes = @"
+          Experimental Windows x64 build using Cirrus' MSIX/package identity.
+          - Extract the ZIP, then follow README_INSTALL.txt and review the installer.
+          - It uses an ephemeral self-signed publisher and requires certificate trust before installation.
+          - Windows CI package installation result: ${{ steps.install_check.outcome }}.
+          - Built from commit $env:GITHUB_SHA. Actual playback and GUI interaction remain untested.
+          "@
+          & gh release create $tag "dist/Cirrus-Preview-MSIX.zip" "dist/SHA256SUMS.txt" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title $title --notes $notes --prerelease
+          if ($LASTEXITCODE -ne 0) { throw "Creating preview release failed" }
