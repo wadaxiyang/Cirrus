@@ -51,6 +51,10 @@
     <!-- Only the executable project bundles the Windows App SDK into a packaged preview. -->
     <PropertyGroup Condition="'$(CirrusMsixPreviewBuild)' == 'true'">
         <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+        <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
+        <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+        <UapAppxPackageBuildMode>SideloadOnly</UapAppxPackageBuildMode>
+        <AppxBundle>Never</AppxBundle>
     </PropertyGroup>
 
     <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
