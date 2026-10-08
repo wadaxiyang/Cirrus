@@ -9,7 +9,12 @@ namespace Cirrus.ViewModels;
 
 public partial class MainWindowViewModel : ObservableObject
 {
+#if CIRRUS_PREVIEW
+    // Unpackaged apps do not have Windows.ApplicationModel.Package.Current.
+    public string ApplicationName => "Cirrus";
+#else
     public string ApplicationName => Package.Current.DisplayName;
+#endif
 
     [ObservableProperty]
     public partial InfoBarSeverity NotificationSeverity { get; set; } = InfoBarSeverity.Informational;
